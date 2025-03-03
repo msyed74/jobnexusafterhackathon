@@ -4,9 +4,8 @@ import multer from "multer";
 import cors from "cors";
 import dotenv from "dotenv";
 import connectDB from "./config/db.js";  
-
 import JobApplication from "./models/JobApplication.js";  
-import Internship from "./models/internshipModel.js";  // ✅ Added missing import
+import Internship from "./models/internshipModel.js";  
 import internshipsRoutes from "./routes/InternshipsRoutes.js"; 
 
 import { createServer } from "http";
@@ -14,42 +13,38 @@ import { Server } from "socket.io";
 import axios from "axios";
 
 dotenv.config();
-connectDB(); // ✅ Connect MongoDB
+connectDB(); 
 
 const app = express();
 const server = createServer(app);
-const io = new Server(server, {
-  cors: { origin: "*" },
-});
+const io = new Server(server, { cors: { origin: "*" } });
 
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// ✅ Sample API Route
+// ✅ Health Check Route
+app.get("/api/health", (req, res) => {
+  res.status(200).json({ status: "Backend is running!" });
+});
+
+// ✅ Main API Route
 app.get("/", (req, res) => {
   res.send("API is running...");
 });
 
-// ✅ Internships API
-app.use("/internships", internshipsRoutes);
+// ✅ Register Routes (Fixed Duplicate)
+app.use("/api/internships", internshipsRoutes);
 
-// ✅ Setup file storage for resumes & attachments
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, "uploads/"); 
-  },
-  filename: (req, file, cb) => {
-    cb(null, Date.now() + "-" + file.originalname);
-  },
-});
+// ✅ File Upload Configuration
+const storage = multer.memoryStorage(); // ✅ Switch to memory for cloud upload
 const upload = multer({ storage });
 
 // ✅ Job Application Route
-app.post("/apply", upload.single("resumeFile"), async (req, res) => {
+app.post("/api/apply", upload.single("resumeFile"), async (req, res) => {
   try {
     const { name, email, resumeLink, coverLetter } = req.body;
-    const resumeFile = req.file ? req.file.filename : null;
+    const resumeFile = req.file ? req.file.originalname : null;
 
     if (!name || !email || (!resumeLink && !resumeFile)) {
       return res.status(400).json({ message: "Missing required fields!" });
@@ -62,11 +57,12 @@ app.post("/apply", upload.single("resumeFile"), async (req, res) => {
     await application.save();
     res.status(201).json({ message: "Application submitted successfully!" });
   } catch (error) {
+    console.error("Application Error:", error);
     res.status(500).json({ message: "Internal Server Error" });
   }
 });
 
-// ✅ Attachment Upload API
+// ✅ File Upload API (Fixed Path)
 app.post("/uploadAttachment", upload.single("attachment"), async (req, res) => {
   const { userId } = req.body;
   const file = req.file;
@@ -76,9 +72,10 @@ app.post("/uploadAttachment", upload.single("attachment"), async (req, res) => {
   }
 
   try {
-    const response = await axios.post("http://localhost:8000/api/uploadAttachment", {
+    const API_URL = process.env.API_URL || "http://localhost:8000";
+    const response = await axios.post(`${API_URL}/api/uploadAttachment`, {
       userId,
-      attachment: `uploads/${file.filename}`, // ✅ Corrected file path
+      attachment: file.originalname, 
     });
 
     return res.json({ url: response.data.url });
@@ -103,11 +100,11 @@ io.on("connection", (socket) => {
 
   socket.on("sendMessage", async ({ userId, mentorId, text }) => {
     const room = `chat_${userId}_${mentorId}`;
-
     io.to(room).emit("message", { sender: userId, text, timestamp: Date.now() });
 
     try {
-      await axios.post("http://localhost:8000/api/storeMessage", { userId, mentorId, text });
+      const API_URL = process.env.API_URL || "http://localhost:8000";
+      await axios.post(`${API_URL}/api/storeMessage`, { userId, mentorId, text });
     } catch (error) {
       console.error("Error saving message:", error);
     }
@@ -119,26 +116,17 @@ io.on("connection", (socket) => {
   });
 });
 
-// ✅ Internship Fetch API
+// ✅ Fetch Internships API
 app.get("/internships", async (req, res) => {
   try {
     const internships = await Internship.find();
-    const formattedData = internships.map((intern) => ({
-      _id: intern._id,
-      company: intern.company_name,
-      role: intern.internship_title,
-      location: intern.location,
-      startDate: intern.start_date,
-      duration: intern.duration,
-      stipend: intern.stipend,
-    }));
-
-    res.json(formattedData);
+    res.json(internships);
   } catch (error) {
+    console.error("Internship Fetch Error:", error);
     res.status(500).json({ error: "Internal Server Error" });
   }
 });
 
 // ✅ Start the server
 const PORT = process.env.PORT || 5000;
-server.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
+server.listen(PORT, "0.0.0.0", () => console.log(`🚀 Server running on port ${PORT}`));
